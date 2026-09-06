@@ -82,9 +82,7 @@ jobs:
 
     - name: Build optimized binaries
       run: |
-        ./ci/run_envoy_docker.sh './ci/do_ci.sh opt_build && cp -v bazel-bin/nighthawk_client.stripped bazel-bin/nighthawk_test_server.stripped bazel-bin/nighthawk_service.stripped bazel-bin/nighthawk_output_transform.stripped bazel-bin/nighthawk_adaptive_load_client.stripped /build/'
-      env:
-        NUM_CPUS: 4
+        ./ci/run_envoy_docker.sh './ci/build_image_binaries.sh'
 
     - name: Prepare image build context
       run: |
