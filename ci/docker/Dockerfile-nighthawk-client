@@ -1,0 +1,29 @@
+# Load-generator image for the bpalermo/nighthawk fork.
+#
+# Differences from Dockerfile-nighthawk (upstream):
+#   - ENTRYPOINT is nighthawk_client; pass only client args in `args:`.
+#   - Runs as an unprivileged user (65532) with no writable paths except /tmp.
+#   - Base image is a multi-arch manifest; this file is built once per
+#     architecture and the results are stitched into a multi-arch manifest.
+FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+
+RUN apt -y update && apt -y install --no-install-recommends libatomic1 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD --chmod=755 nighthawk_client /usr/local/bin/nighthawk_client
+ADD --chmod=755 nighthawk_test_server /usr/local/bin/nighthawk_test_server
+ADD --chmod=755 nighthawk_output_transform /usr/local/bin/nighthawk_output_transform
+ADD --chmod=755 nighthawk_service /usr/local/bin/nighthawk_service
+ADD --chmod=755 nighthawk_adaptive_load_client /usr/local/bin/nighthawk_adaptive_load_client
+
+ADD default-config.yaml /etc/nighthawk/nighthawk.yaml
+
+# Ports for nighthawk_test_server, see default-config.yaml
+EXPOSE 10001 10080
+# The default port for nighthawk_service
+EXPOSE 8443
+
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/nighthawk_client"]
+CMD ["--help"]
