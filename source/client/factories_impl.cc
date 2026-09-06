@@ -57,6 +57,7 @@ BenchmarkClientPtr BenchmarkClientFactoryImpl::create(
                                      std::make_unique<SinkableHdrStatistic>(scope, worker_id),
                                      std::make_unique<SinkableHdrStatistic>(scope, worker_id),
                                      std::make_unique<SinkableHdrStatistic>(scope, worker_id),
+                                     std::make_unique<SinkableHdrStatistic>(scope, worker_id),
                                      std::make_unique<SinkableHdrStatistic>(scope, worker_id));
   auto benchmark_client = std::make_unique<BenchmarkClientHttpImpl>(
       api, dispatcher, scope, statistic, options_.protocol(), cluster_manager, tracer, cluster_name,
@@ -67,6 +68,7 @@ BenchmarkClientPtr BenchmarkClientFactoryImpl::create(
   benchmark_client->setMaxActiveRequests(options_.maxActiveRequests());
   benchmark_client->setMaxRequestsPerConnection(options_.maxRequestsPerConnection());
   benchmark_client->setTimeout(options_.timeout());
+  benchmark_client->setGrpc(options_.grpc());
 
   return benchmark_client;
 }
@@ -207,9 +209,19 @@ RequestSourceFactoryImpl::create(const Envoy::Upstream::ClusterManagerPtr& clust
   }
 
   header->setMethod(envoy::config::core::v3::RequestMethod_Name(options_.requestMethod()));
-  const uint32_t content_length = options_.requestBodySize();
-  if (content_length > 0) {
-    header->setContentLength(content_length);
+  std::string body = options_.requestBody();
+  if (options_.grpc()) {
+    // gRPC over HTTP/2: no content-length, message framed on the wire.
+    header->setReferenceContentType(Envoy::Http::Headers::get().ContentTypeValues.Grpc);
+    header->setReferenceTE(Envoy::Http::Headers::get().TEValues.Trailers);
+    body = grpcFrameMessage(body);
+  } else if (!body.empty()) {
+    header->setContentLength(body.size());
+  } else {
+    const uint32_t content_length = options_.requestBodySize();
+    if (content_length > 0) {
+      header->setContentLength(content_length);
+    }
   }
 
   auto request_options = options_.toCommandLineOptions()->request_options();
@@ -235,7 +247,8 @@ RequestSourceFactoryImpl::create(const Envoy::Upstream::ClusterManagerPtr& clust
     RequestSourcePtr request_source = std::move(plugin_or.value());
     return request_source;
   } else {
-    return std::make_unique<StaticRequestSourceImpl>(std::move(header));
+    return std::make_unique<StaticRequestSourceImpl>(std::move(header), UINT64_MAX,
+                                                     std::move(body));
   }
 }
 absl::StatusOr<RequestSourcePtr> RequestSourceFactoryImpl::LoadRequestSourcePlugin(

@@ -14,6 +14,9 @@ Version history
 
 ### Changelist
 
+- `--request-body-file` sends a file's bytes verbatim as the request body (binary safe; no Content-Type is set). The `RequestOptions.request_body` (bytes) field carries it over the gRPC service API.
+- `--grpc` issues gRPC unary calls: implies HTTP/2 and POST, sets `content-type: application/grpc` and `te: trailers`, frames the `--request-body-file` bytes as a gRPC message, and scores responses on `grpc-status`. New counters `benchmark.grpc_error` and `benchmark.grpc_status.<code>` (`.missing` when absent), new statistic `benchmark_http_client.latency_grpc_ok`; a failed RPC is no longer counted as `benchmark.http_2xx`.
+- The Envoy exception message on the tunneling startup path is logged instead of printed to stdout, keeping stdout reserved for the formatted output.
 - Introducing termination predicates (https://github.com/envoyproxy/nighthawk/pull/167) and https://github.com/envoyproxy/nighthawk/pull/176
 
 0.2 (July 16, 2019)

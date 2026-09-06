@@ -3,8 +3,11 @@
 #include <cerrno>
 #include <cstdint>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <optional>
 
+#include "external/envoy/source/common/common/utility.h"
 #include "external/envoy/source/common/protobuf/message_validator_impl.h"
 #include "external/envoy/source/common/protobuf/protobuf.h"
 #include "external/envoy/source/common/protobuf/utility.h"
@@ -192,6 +195,24 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
       "Size of the request body to send. NH will send a number of consecutive 'a' characters equal "
       "to the number specified here. (default: 0, no data).",
       false, 0, "uint32_t", cmd);
+  TCLAP::ValueArg<std::string> request_body_file(
+      "", "request-body-file",
+      "Path to a file whose bytes are sent verbatim as the request body on every request (binary "
+      "safe). No Content-Type is set for it; pass one with --request-header if needed. Mutually "
+      "exclusive with --request-body-size. With --grpc the bytes are treated as a single "
+      "serialized protobuf message and wrapped in a gRPC length-prefixed frame.",
+      false, "", "string", cmd);
+  TCLAP::SwitchArg grpc(
+      "", "grpc",
+      "Issue gRPC unary calls instead of plain HTTP requests. Implies --protocol http2 (prior "
+      "knowledge on http:// URIs) and --request-method POST, adds 'content-type: application/grpc' "
+      "and 'te: trailers', frames the --request-body-file bytes as a gRPC message, and scores "
+      "responses on the grpc-status trailer: status 0 counts as success (also recorded in the "
+      "benchmark_http_client.latency_grpc_ok statistic), any other or missing status increments "
+      "benchmark.grpc_error and benchmark.grpc_status.<code> and is not counted as a 2xx success. "
+      "The URI path (or a ':path' request header) selects the method, e.g. "
+      "http://host:8080/pkg.Service/Method.",
+      cmd, false);
 
   TCLAP::ValueArg<std::string> tls_context(
       "", "tls-context",
@@ -468,6 +489,10 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
   if (h2.isSet() && protocol.isSet()) {
     throw MalformedArgvException("--h2 and --protocol are mutually exclusive");
   }
+  TCLAP_SET_IF_SPECIFIED(grpc, grpc_);
+  if (grpc_ && !h2.isSet() && !protocol.isSet()) {
+    protocol_ = nighthawk::client::Protocol::HTTP2;
+  }
   if (h2.isSet()) {
     ENVOY_LOG(warn, "--h2 is deprecated, use --protocol http2 instead.");
   }
@@ -530,9 +555,14 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
     absl::AsciiStrToUpper(&upper_cased);
     RELEASE_ASSERT(envoy::config::core::v3::RequestMethod_Parse(upper_cased, &request_method_),
                    "Failed to parse request method");
+  } else if (grpc_) {
+    request_method_ = envoy::config::core::v3::RequestMethod::POST;
   }
   TCLAP_SET_IF_SPECIFIED(request_headers, request_headers_);
   TCLAP_SET_IF_SPECIFIED(request_body_size, request_body_size_);
+  if (request_body_file.isSet()) {
+    request_body_ = readRequestBodyFile(request_body_file.getValue());
+  }
   TCLAP_SET_IF_SPECIFIED(max_pending_requests, max_pending_requests_);
   TCLAP_SET_IF_SPECIFIED(max_active_requests, max_active_requests_);
   TCLAP_SET_IF_SPECIFIED(max_requests_per_connection, max_requests_per_connection_);
@@ -856,6 +886,10 @@ OptionsImpl::OptionsImpl(const nighthawk::client::CommandLineOptions& options) {
 
   h2_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(options, h2, h2_);
   protocol_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(options, protocol, protocol_);
+  grpc_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(options, grpc, grpc_);
+  if (grpc_ && !options.has_protocol() && !options.has_h2()) {
+    protocol_ = nighthawk::client::Protocol::HTTP2;
+  }
 
   if (options.has_http3_protocol_options()) {
     http3_protocol_options_.emplace(Http3ProtocolOptions());
@@ -892,15 +926,21 @@ OptionsImpl::OptionsImpl(const nighthawk::client::CommandLineOptions& options) {
     if (request_options.request_method() !=
         envoy::config::core::v3::RequestMethod::METHOD_UNSPECIFIED) {
       request_method_ = request_options.request_method();
+    } else if (grpc_) {
+      request_method_ = envoy::config::core::v3::RequestMethod::POST;
     }
     request_body_size_ =
         PROTOBUF_GET_WRAPPED_OR_DEFAULT(request_options, request_body_size, request_body_size_);
+    request_body_ = request_options.request_body();
   } else if (options.has_request_source()) {
     const auto& request_source_options = options.request_source();
     request_source_ = request_source_options.uri();
   } else if (options.has_request_source_plugin_config()) {
     request_source_plugin_config_.emplace(envoy::config::core::v3::TypedExtensionConfig());
     request_source_plugin_config_.value().MergeFrom(options.request_source_plugin_config());
+  }
+  if (grpc_ && !options.has_request_options()) {
+    request_method_ = envoy::config::core::v3::RequestMethod::POST;
   }
 
   if (options.has_rate_limiter_plugin_config()) {
@@ -1012,7 +1052,42 @@ void OptionsImpl::setNonTrivialDefaults() {
   jitter_uniform_ = std::chrono::nanoseconds(0);
 }
 
+std::string OptionsImpl::readRequestBodyFile(const std::string& path) {
+  std::ifstream file(path, std::ios::in | std::ios::binary);
+  if (!file) {
+    throw MalformedArgvException(fmt::format("Failed to open --request-body-file '{}': {}", path,
+                                             Envoy::errorDetails(errno)));
+  }
+  std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  if (file.bad()) {
+    throw MalformedArgvException(fmt::format("Failed to read --request-body-file '{}'", path));
+  }
+  if (contents.size() > largest_acceptable_uint32_option_value) {
+    throw MalformedArgvException(fmt::format(
+        "--request-body-file '{}' is larger than the maximum request body size of {} bytes", path,
+        largest_acceptable_uint32_option_value));
+  }
+  return contents;
+}
+
 void OptionsImpl::validate() const {
+  if (!request_body_.empty() && request_body_size_ > 0) {
+    throw MalformedArgvException(
+        "--request-body-file and --request-body-size are mutually exclusive");
+  }
+  if (grpc_) {
+    if (h2_) {
+      // --h2 is the deprecated spelling of --protocol http2; both are fine.
+    } else if (protocol_ != nighthawk::client::Protocol::HTTP2) {
+      throw MalformedArgvException("--grpc requires --protocol http2");
+    }
+    if (request_method_ != envoy::config::core::v3::RequestMethod::POST) {
+      throw MalformedArgvException("--grpc requires --request-method POST");
+    }
+    if (!request_source_.empty()) {
+      throw MalformedArgvException("--grpc is not supported together with --request-source");
+    }
+  }
   if (h2_use_multiple_connections_) {
     throw MalformedArgvException(
         "The experimental_h2_use_multiple_connections option is deprecated, set "
@@ -1137,8 +1212,14 @@ CommandLineOptionsPtr OptionsImpl::toCommandLineOptionsInternal() const {
       } else {
         throw MalformedArgvException("A ':' is required in a header.");
       }
-      request_options->mutable_request_body_size()->set_value(requestBodySize());
     }
+    request_options->mutable_request_body_size()->set_value(requestBodySize());
+    if (!request_body_.empty()) {
+      request_options->set_request_body(request_body_);
+    }
+  }
+  if (grpc_) {
+    command_line_options->mutable_grpc()->set_value(true);
   }
 
   if (rate_limiter_plugin_config_.has_value()) {

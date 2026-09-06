@@ -189,7 +189,8 @@ bazel-bin/nighthawk_client  [--user-defined-plugin-config <string>] ...
 <uint32_t>] [--max-pending-requests
 <uint32_t>] [--transport-socket <string>]
 [--upstream-bind-config <string>]
-[--tls-context <string>]
+[--tls-context <string>] [--grpc]
+[--request-body-file <string>]
 [--request-body-size <uint32_t>]
 [--request-header <string>] ...
 [--request-method <GET|HEAD|POST|PUT|DELETE
@@ -373,6 +374,26 @@ DEPRECATED, use --transport-socket instead. TlS context configuration
 in json. Mutually exclusive with --transport-socket. Example (json):
 {common_tls_context:{tls_params:{cipher_suites:["-ALL:ECDHE-RSA-AES128
 -SHA"]}}}
+
+--grpc
+Issue gRPC unary calls instead of plain HTTP requests. Implies
+--protocol http2 (prior knowledge on http:// URIs) and
+--request-method POST, adds 'content-type: application/grpc' and 'te:
+trailers', frames the --request-body-file bytes as a gRPC message, and
+scores responses on the grpc-status trailer: status 0 counts as
+success (also recorded in the benchmark_http_client.latency_grpc_ok
+statistic), any other or missing status increments
+benchmark.grpc_error and benchmark.grpc_status.<code> and is not
+counted as a 2xx success. The URI path (or a ':path' request header)
+selects the method, e.g. http://host:8080/pkg.Service/Method.
+
+--request-body-file <string>
+Path to a file whose bytes are sent verbatim as the request body on
+every request (binary safe). No Content-Type is set for it; pass one
+with --request-header if needed. Mutually exclusive with
+--request-body-size. With --grpc the bytes are treated as a single
+serialized protobuf message and wrapped in a gRPC length-prefixed
+frame.
 
 --request-body-size <uint32_t>
 Size of the request body to send. NH will send a number of consecutive

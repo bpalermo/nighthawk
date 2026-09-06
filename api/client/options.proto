@@ -26,6 +26,10 @@ message RequestOptions {
   // If this isn't provided, Nighthawk sends its built-in request body (the character 'a'
   // repeated n times to the specified request size).
   string json_body = 4;
+  // Optional raw request body, sent verbatim (binary safe). Populated by --request-body-file.
+  // Nighthawk does not set a Content-Type for this body; supply one with request_headers.
+  // Mutually exclusive with request_body_size and json_body.
+  bytes request_body = 5;
 }
 
 // Used for providing multiple request options, especially for RequestSourcePlugins.
@@ -181,6 +185,15 @@ message CommandLineOptions {
   }
 
   TunnelOptions tunnel_options = 114;
+
+  // Issue gRPC unary calls instead of plain HTTP requests. Implies protocol HTTP/2 (prior
+  // knowledge when the URI scheme is http) and request method POST, adds
+  // "content-type: application/grpc" and "te: trailers", wraps the request body from
+  // request_options.request_body in a gRPC length-prefixed message frame, and scores responses by
+  // the grpc-status trailer (or header for trailers-only responses) instead of the HTTP status
+  // alone. See the benchmark.grpc_error and benchmark.grpc_status.<code> counters and the
+  // benchmark_http_client.latency_grpc_ok statistic.
+  google.protobuf.BoolValue grpc = 121;
 
   // Allows user to set specific HTTP3 protocol options.
   // Only valid when protocol is set to HTTP3.

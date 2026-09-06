@@ -32,6 +32,7 @@ public:
   Envoy::Event::MockDispatcher dispatcher_;
   MockOptions options_;
   Envoy::Tracing::TracerSharedPtr tracer_;
+  const std::string empty_body_;
 };
 
 TEST_F(FactoriesTest, CreateBenchmarkClient) {
@@ -44,6 +45,7 @@ TEST_F(FactoriesTest, CreateBenchmarkClient) {
   EXPECT_CALL(options_, maxRequestsPerConnection());
   EXPECT_CALL(options_, openLoop());
   EXPECT_CALL(options_, responseHeaderWithLatencyInput());
+  EXPECT_CALL(options_, grpc());
   EXPECT_CALL(options_, timeout());
   StaticRequestSourceImpl request_generator(
       std::make_unique<Envoy::Http::TestRequestHeaderMapImpl>());
@@ -73,6 +75,8 @@ TEST_F(FactoriesTest, CreateRequestSourcePluginWithWorkingJsonReturnsWorkingRequ
                                    Envoy::ProtobufMessage::getStrictValidationVisitor());
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
+  EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
+  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -113,6 +117,8 @@ TEST_F(FactoriesTest, CreateRequestSourcePluginWithNonWorkingJsonThrowsError) {
                                    Envoy::ProtobufMessage::getStrictValidationVisitor());
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
+  EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
+  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -137,6 +143,8 @@ TEST_F(FactoriesTest, CreateRequestSource) {
   std::optional<envoy::config::core::v3::TypedExtensionConfig> request_source_plugin_config;
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
+  EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
+  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -155,10 +163,63 @@ TEST_F(FactoriesTest, CreateRequestSource) {
   EXPECT_NE(nullptr, request_generator.get());
 }
 
+TEST_F(FactoriesTest, CreateRequestSourceWithBodyFileSetsContentLengthOnly) {
+  std::optional<envoy::config::core::v3::TypedExtensionConfig> request_source_plugin_config;
+  const std::string body("\x00\x01raw\xff", 6);
+  EXPECT_CALL(options_, requestMethod())
+      .WillRepeatedly(Return(envoy::config::core::v3::RequestMethod::POST));
+  EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(body));
+  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
+  EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/bar"));
+  EXPECT_CALL(options_, requestSource());
+  EXPECT_CALL(options_, requestSourcePluginConfig())
+      .WillRepeatedly(ReturnRef(request_source_plugin_config));
+  EXPECT_CALL(options_, toCommandLineOptions())
+      .WillOnce(Return(ByMove(std::make_unique<nighthawk::client::CommandLineOptions>())));
+  RequestSourceFactoryImpl factory(options_, *api_);
+  Envoy::Upstream::ClusterManagerPtr cluster_manager;
+  RequestSourcePtr request_source = factory.create(
+      cluster_manager, dispatcher_, *stats_scope_.createScope("foo."), "requestsource");
+  Nighthawk::RequestPtr request = request_source->get()();
+  EXPECT_EQ(body, request->body());
+  EXPECT_EQ("6", request->header()->getContentLengthValue());
+  EXPECT_EQ("", request->header()->getContentTypeValue());
+  EXPECT_EQ("POST", request->header()->getMethodValue());
+}
+
+TEST_F(FactoriesTest, CreateRequestSourceWithGrpcFramesBodyAndSetsGrpcHeaders) {
+  std::optional<envoy::config::core::v3::TypedExtensionConfig> request_source_plugin_config;
+  const std::string message("hello");
+  EXPECT_CALL(options_, requestMethod())
+      .WillRepeatedly(Return(envoy::config::core::v3::RequestMethod::POST));
+  EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(message));
+  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(true));
+  EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/pkg.Svc/Method"));
+  EXPECT_CALL(options_, requestSource());
+  EXPECT_CALL(options_, requestSourcePluginConfig())
+      .WillRepeatedly(ReturnRef(request_source_plugin_config));
+  EXPECT_CALL(options_, toCommandLineOptions())
+      .WillOnce(Return(ByMove(std::make_unique<nighthawk::client::CommandLineOptions>())));
+  RequestSourceFactoryImpl factory(options_, *api_);
+  Envoy::Upstream::ClusterManagerPtr cluster_manager;
+  RequestSourcePtr request_source = factory.create(
+      cluster_manager, dispatcher_, *stats_scope_.createScope("foo."), "requestsource");
+  Nighthawk::RequestPtr request = request_source->get()();
+  const std::string expected_frame = std::string("\x00\x00\x00\x00\x05", 5) + message;
+  EXPECT_EQ(expected_frame, request->body());
+  EXPECT_EQ("application/grpc", request->header()->getContentTypeValue());
+  EXPECT_EQ("trailers", request->header()->getTEValue());
+  EXPECT_EQ("", request->header()->getContentLengthValue());
+  EXPECT_EQ("/pkg.Svc/Method", request->header()->getPathValue());
+  EXPECT_EQ("POST", request->header()->getMethodValue());
+}
+
 TEST_F(FactoriesTest, CreateRemoteRequestSource) {
   std::optional<envoy::config::core::v3::TypedExtensionConfig> request_source_plugin_config;
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
+  EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
+  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource()).WillOnce(Return("http://bar/"));
   EXPECT_CALL(options_, requestsPerSecond()).WillOnce(Return(5));

@@ -329,6 +329,7 @@ TEST_F(OptionsImplTest, AlmostAll) {
   }
 
   EXPECT_EQ(cmd->request_options().request_body_size().value(), options->requestBodySize());
+  EXPECT_TRUE(cmd->request_options().request_body().empty());
   EXPECT_TRUE(util(cmd->transport_socket(), options->transportSocket().value()));
   EXPECT_EQ(cmd->max_pending_requests().value(), options->maxPendingRequests());
   EXPECT_EQ(cmd->max_active_requests().value(), options->maxActiveRequests());
@@ -382,6 +383,83 @@ TEST_F(OptionsImplTest, AlmostAll) {
 
 // We test RequestSource here and not in All above because it is exclusive to some of the other
 // options.
+TEST_F(OptionsImplTest, RequestBodyFileIsReadVerbatimAndRoundTrips) {
+  const std::string body("\x00\x01{\"name\":\"world\"}\xff\n", 20);
+  const std::string path = TestEnvironment::writeStringToFileForTest("request_body.bin", body);
+  std::unique_ptr<OptionsImpl> options = TestUtility::createOptionsImpl(
+      fmt::format("{} --request-body-file {} {}", client_name_, path, good_test_uri_));
+  EXPECT_EQ(body, options->requestBody());
+  EXPECT_EQ(0, options->requestBodySize());
+  EXPECT_FALSE(options->grpc());
+
+  CommandLineOptionsPtr cmd = options->toCommandLineOptions();
+  EXPECT_EQ(body, cmd->request_options().request_body());
+  EXPECT_FALSE(cmd->has_grpc());
+  OptionsImpl round_trip(*cmd);
+  EXPECT_EQ(body, round_trip.requestBody());
+}
+
+TEST_F(OptionsImplTest, RequestBodyFileMissing) {
+  EXPECT_THROW_WITH_REGEX(
+      TestUtility::createOptionsImpl(fmt::format("{} --request-body-file {} {}", client_name_,
+                                                 "/does/not/exist.bin", good_test_uri_)),
+      MalformedArgvException, "Failed to open --request-body-file");
+}
+
+TEST_F(OptionsImplTest, RequestBodyFileAndRequestBodySizeAreMutuallyExclusive) {
+  const std::string path = TestEnvironment::writeStringToFileForTest("request_body2.bin", "abc");
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(
+                              fmt::format("{} --request-body-file {} --request-body-size 3 {}",
+                                          client_name_, path, good_test_uri_)),
+                          MalformedArgvException, "mutually exclusive");
+}
+
+TEST_F(OptionsImplTest, GrpcImpliesHttp2AndPostAndRoundTrips) {
+  std::unique_ptr<OptionsImpl> options =
+      TestUtility::createOptionsImpl(fmt::format("{} --grpc {}", client_name_, good_test_uri_));
+  EXPECT_TRUE(options->grpc());
+  EXPECT_EQ(Envoy::Http::Protocol::Http2, options->protocol());
+  EXPECT_EQ(envoy::config::core::v3::RequestMethod::POST, options->requestMethod());
+
+  CommandLineOptionsPtr cmd = options->toCommandLineOptions();
+  EXPECT_TRUE(cmd->grpc().value());
+  EXPECT_EQ(nighthawk::client::Protocol::HTTP2, cmd->protocol().value());
+  OptionsImpl round_trip(*cmd);
+  EXPECT_TRUE(round_trip.grpc());
+  EXPECT_EQ(Envoy::Http::Protocol::Http2, round_trip.protocol());
+  EXPECT_EQ(envoy::config::core::v3::RequestMethod::POST, round_trip.requestMethod());
+
+  // Explicit http2 and the deprecated --h2 spelling are accepted too.
+  EXPECT_TRUE(TestUtility::createOptionsImpl(
+                  fmt::format("{} --grpc --protocol http2 {}", client_name_, good_test_uri_))
+                  ->grpc());
+  EXPECT_TRUE(
+      TestUtility::createOptionsImpl(fmt::format("{} --grpc --h2 {}", client_name_, good_test_uri_))
+          ->grpc());
+}
+
+TEST_F(OptionsImplTest, GrpcFromProtoWithoutProtocolImpliesHttp2) {
+  nighthawk::client::CommandLineOptions cmd;
+  cmd.mutable_uri()->set_value(good_test_uri_);
+  cmd.mutable_grpc()->set_value(true);
+  OptionsImpl options(cmd);
+  EXPECT_TRUE(options.grpc());
+  EXPECT_EQ(Envoy::Http::Protocol::Http2, options.protocol());
+  EXPECT_EQ(envoy::config::core::v3::RequestMethod::POST, options.requestMethod());
+}
+
+TEST_F(OptionsImplTest, GrpcRejectsOtherProtocolsAndMethods) {
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(fmt::format(
+                              "{} --grpc --protocol http1 {}", client_name_, good_test_uri_)),
+                          MalformedArgvException, "--grpc requires --protocol http2");
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(fmt::format(
+                              "{} --grpc --protocol http3 {}", client_name_, good_test_uri_)),
+                          MalformedArgvException, "--grpc requires --protocol http2");
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(fmt::format(
+                              "{} --grpc --request-method GET {}", client_name_, good_test_uri_)),
+                          MalformedArgvException, "--grpc requires --request-method POST");
+}
+
 TEST_F(OptionsImplTest, RequestSource) {
   Envoy::MessageUtil util;
   const std::string request_source = "127.9.9.4:32323";
