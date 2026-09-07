@@ -14,6 +14,7 @@ Version history
 
 ### Changelist
 
+- `OptionsImpl::toCommandLineOptions()` now always emits `request_options.request_body_size`; it was only set when at least one `--request-header` was configured, so the size was lost on the gRPC service path otherwise.
 - Introducing termination predicates (https://github.com/envoyproxy/nighthawk/pull/167) and https://github.com/envoyproxy/nighthawk/pull/176
 
 0.2 (July 16, 2019)
