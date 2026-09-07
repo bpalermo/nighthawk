@@ -125,6 +125,7 @@ envoy_cc_library(
         "@envoy//envoy/registry",
         "@envoy//source/common/buffer:buffer_lib_with_external_headers",
         "@envoy//source/common/common:assert_lib_with_external_headers",
+        "@envoy//source/common/network:address_lib_with_external_headers",
         "@envoy//source/common/network:resolver_lib_with_external_headers",
         "@envoy//source/common/network:socket_interface_lib_with_external_headers",
         "@envoy//source/common/network:utility_lib_with_external_headers",

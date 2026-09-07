@@ -68,7 +68,7 @@ backend-specific format.
 Nighthawk ships a UDP statsd sink, registered under the same names as Envoy's
 sinks so the `--stats-sinks` examples work as documented:
 `envoy.stat_sinks.statsd` (config `envoy.config.metrics.v3.StatsdSink`, UDP
-`address` only) and `envoy.stat_sinks.dog_statsd`
+`address` only; an IP literal or a host name resolved at startup) and `envoy.stat_sinks.dog_statsd`
 (`envoy.config.metrics.v3.DogStatsdSink`, adds DogStatsD tags and optional
 datagram batching via `max_bytes_per_datagram`). Metric names are prefixed with
 `nighthawk` unless `prefix` is set. Counters are flushed as deltas (`|c`) every

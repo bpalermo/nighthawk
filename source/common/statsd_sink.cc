@@ -1,5 +1,10 @@
 #include "source/common/statsd_sink.h"
 
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+#include <algorithm>
 #include <cstdio>
 
 #include "envoy/network/socket_interface.h"
@@ -7,6 +12,7 @@
 
 #include "external/envoy/source/common/buffer/buffer_impl.h"
 #include "external/envoy/source/common/common/assert.h"
+#include "external/envoy/source/common/network/address_impl.h"
 #include "external/envoy/source/common/network/resolver_impl.h"
 #include "external/envoy/source/common/network/utility.h"
 #include "external/envoy/source/common/protobuf/utility.h"
@@ -234,11 +240,60 @@ void StatsdSink::onHistogramComplete(const Envoy::Stats::Histogram& histogram, u
 }
 
 namespace {
+// Resolves a host name synchronously (sinks are created once, at startup).
+Envoy::Network::Address::InstanceConstSharedPtr resolveHostName(const std::string& host,
+                                                                uint32_t port) {
+  addrinfo hints{};
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_DGRAM;
+  addrinfo* results = nullptr;
+  const int rc = ::getaddrinfo(host.c_str(), nullptr, &hints, &results);
+  if (rc != 0 || results == nullptr) {
+    throw Envoy::EnvoyException(
+        absl::StrCat("statsd sink: could not resolve host '", host, "': ", gai_strerror(rc)));
+  }
+  Envoy::Network::Address::InstanceConstSharedPtr address;
+  for (addrinfo* entry = results; entry != nullptr && address == nullptr; entry = entry->ai_next) {
+    sockaddr_storage storage{};
+    if (entry->ai_addrlen > sizeof(storage)) {
+      continue;
+    }
+    std::copy_n(reinterpret_cast<const uint8_t*>(entry->ai_addr), entry->ai_addrlen,
+                reinterpret_cast<uint8_t*>(&storage));
+    if (storage.ss_family == AF_INET) {
+      reinterpret_cast<sockaddr_in*>(&storage)->sin_port = htons(port);
+    } else if (storage.ss_family == AF_INET6) {
+      reinterpret_cast<sockaddr_in6*>(&storage)->sin6_port = htons(port);
+    } else {
+      continue;
+    }
+    absl::StatusOr<Envoy::Network::Address::InstanceConstSharedPtr> parsed =
+        Envoy::Network::Address::addressFromSockAddr(storage, entry->ai_addrlen,
+                                                     /*v6only=*/false);
+    if (parsed.ok()) {
+      address = parsed.value();
+    }
+  }
+  ::freeaddrinfo(results);
+  if (address == nullptr) {
+    throw Envoy::EnvoyException(
+        absl::StrCat("statsd sink: host '", host, "' has no usable IP address"));
+  }
+  return address;
+}
+
 Envoy::Network::Address::InstanceConstSharedPtr
 resolveUdpAddress(const envoy::config::core::v3::Address& address) {
   absl::StatusOr<Envoy::Network::Address::InstanceConstSharedPtr> resolved =
       Envoy::Network::Address::resolveProtoAddress(address);
   if (!resolved.ok()) {
+    // resolveProtoAddress only accepts IP literals; fall back to resolving a host name.
+    if (address.has_socket_address() && address.socket_address().resolver_name().empty() &&
+        address.socket_address().port_specifier_case() ==
+            envoy::config::core::v3::SocketAddress::PortSpecifierCase::kPortValue) {
+      return resolveHostName(address.socket_address().address(),
+                             address.socket_address().port_value());
+    }
     throw Envoy::EnvoyException(
         absl::StrCat("statsd sink: invalid address: ", resolved.status().message()));
   }

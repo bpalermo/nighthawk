@@ -233,6 +233,17 @@ TEST_F(StatsdSinkTest, FactoriesAreRegisteredUnderEnvoysSinkNames) {
   EXPECT_TRUE(dog_typed->useTags());
   EXPECT_EQ("nighthawk", dog_typed->prefix());
 
+  // Host names are resolved at creation time.
+  envoy::config::metrics::v3::DogStatsdSink by_name;
+  by_name.mutable_address()->mutable_socket_address()->set_address("localhost");
+  by_name.mutable_address()->mutable_socket_address()->set_port_value(receiver_.port());
+  EXPECT_NE(nullptr, dog.createStatsSink(by_name, store_.symbolTable(), tls_, {}));
+  envoy::config::metrics::v3::DogStatsdSink unresolvable;
+  unresolvable.mutable_address()->mutable_socket_address()->set_address("no.such.host.invalid");
+  unresolvable.mutable_address()->mutable_socket_address()->set_port_value(1);
+  EXPECT_THROW_WITH_REGEX(dog.createStatsSink(unresolvable, store_.symbolTable(), tls_, {}),
+                          Envoy::EnvoyException, "could not resolve host");
+
   envoy::config::metrics::v3::DogStatsdSink no_address;
   EXPECT_THROW_WITH_REGEX(dog.createStatsSink(no_address, store_.symbolTable(), tls_, {}),
                           Envoy::EnvoyException, "'address' is required");
