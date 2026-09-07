@@ -191,7 +191,7 @@ private:
    */
   static std::string readRequestBodyFile(const std::string& path);
   /**
-   * In --grpc-stream mode, raises max_pending_requests_ to at least the number of streams per
+   * In --grpc-mode bidi-stream, raises max_pending_requests_ to at least the number of streams per
    * worker so that opening all streams at once does not trip the pending-request circuit breaker.
    */
   void raisePendingRequestsForStreams();

@@ -427,9 +427,9 @@ benchmark.stream_grpc_status.<code>.
 Path to a file whose bytes are sent verbatim as the request body on
 every request (binary safe). No Content-Type is set for it; pass one
 with --request-header if needed. Mutually exclusive with
---request-body-size. With --grpc the bytes are treated as a single
-serialized protobuf message and wrapped in a gRPC length-prefixed
-frame.
+--request-body-size. With --grpc-mode unary the bytes are treated as a
+single serialized protobuf message and wrapped in a gRPC
+length-prefixed frame.
 
 --request-body-size <uint32_t>
 Size of the request body to send. NH will send a number of consecutive

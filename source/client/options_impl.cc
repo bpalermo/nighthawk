@@ -200,7 +200,8 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
       "", "request-body-file",
       "Path to a file whose bytes are sent verbatim as the request body on every request (binary "
       "safe). No Content-Type is set for it; pass one with --request-header if needed. Mutually "
-      "exclusive with --request-body-size. With --grpc the bytes are treated as a single "
+      "exclusive with --request-body-size. With --grpc-mode unary the bytes are treated as a "
+      "single "
       "serialized protobuf message and wrapped in a gRPC length-prefixed frame.",
       false, "", "string", cmd);
   std::vector<std::string> grpc_modes = {"unary", "bidi-stream"};
