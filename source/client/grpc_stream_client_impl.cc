@@ -315,9 +315,22 @@ void GrpcStreamBenchmarkClientImpl::finish() {
   dispatcher_.run(Envoy::Event::Dispatcher::RunType::RunUntilExit);
   wait_timer_.reset();
   waiting_for_ = WaitingFor::Nothing;
-  const uint32_t still_open = openStreams();
+  // Streams the server did not close within the drain window: account for them now, before the
+  // worker snapshots its counters. Their unanswered messages are lost, and they will be reset in
+  // terminate() without ever yielding a grpc-status.
+  uint32_t still_open = 0;
+  for (Stream& stream : streams_) {
+    if (stream.state == StreamState::Open || stream.state == StreamState::HalfClosed) {
+      still_open++;
+      counters_.stream_drain_incomplete_.inc();
+      completeInflight(stream, /*success=*/false);
+    }
+  }
   if (still_open > 0) {
-    ENVOY_LOG(info, "{} gRPC stream(s) still open after the {} ms drain window.", still_open,
+    ENVOY_LOG(info,
+              "{} gRPC stream(s) still open after the {} ms drain window (counted in "
+              "benchmark.stream_drain_incomplete).",
+              still_open,
               std::chrono::duration_cast<std::chrono::milliseconds>(drain_duration_).count());
   }
 }

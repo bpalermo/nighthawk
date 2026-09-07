@@ -336,10 +336,15 @@ TEST_F(GrpcStreamClientTest, FinishGivesUpAfterDrainDuration) {
   EXPECT_GE(time_system_.monotonicTime() - started, 20ms);
   EXPECT_TRUE(half_closed_[0]);
   EXPECT_EQ(1, client_->openStreams());
-  // terminate() resets what is left and fails the unanswered message.
+  // The unanswered message is accounted for by finish() itself, before any counter snapshot.
+  EXPECT_EQ(1, getCounter("stream_drain_incomplete"));
+  EXPECT_EQ(1, getCounter("stream_inflight_lost"));
+  EXPECT_EQ(0, getCounter("stream_grpc_status.missing"));
+  // terminate() resets what is left without double counting.
   client_->terminate();
   EXPECT_EQ(0, client_->openStreams());
   EXPECT_EQ(1, getCounter("stream_inflight_lost"));
+  EXPECT_EQ(1, getCounter("stream_drain_incomplete"));
 }
 
 } // namespace Client

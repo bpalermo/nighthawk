@@ -40,6 +40,7 @@ namespace Client {
   COUNTER(stream_early_close)                                                                      \
   COUNTER(stream_unexpected_message)                                                               \
   COUNTER(stream_inflight_lost)                                                                    \
+  COUNTER(stream_drain_incomplete)                                                                 \
   COUNTER(stream_write_blocked)
 
 struct GrpcStreamCounters {
@@ -59,9 +60,12 @@ struct GrpcStreamCounters {
  * Counters live under the "benchmark." scope: stream_messages_sent, stream_messages_received,
  * stream_deferred, stream_unavailable (send scheduled for a stream that is not open),
  * stream_resets, stream_early_close (the server closed a stream before we half-closed it),
- * stream_unexpected_message, stream_inflight_lost (messages unanswered when a stream closed),
- * stream_write_blocked, streams_opened, stream_open_failures and stream_grpc_status.<code>
- * (grpc-status seen when a stream closed; "missing" when it closed without one).
+ * stream_unexpected_message, stream_inflight_lost (messages unanswered when a stream closed or
+ * when the drain window ended), stream_drain_incomplete (streams still open when the drain
+ * window ended; their unanswered messages are in stream_inflight_lost and they get no
+ * stream_grpc_status entry), stream_write_blocked, streams_opened, stream_open_failures and
+ * stream_grpc_status.<code> (grpc-status seen when a stream closed; "missing" when it closed
+ * without one).
  * Statistic: benchmark_stream.message_latency.
  */
 class GrpcStreamBenchmarkClientImpl : public BenchmarkClient,
