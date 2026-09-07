@@ -382,6 +382,22 @@ TEST_F(OptionsImplTest, AlmostAll) {
 
 // We test RequestSource here and not in All above because it is exclusive to some of the other
 // options.
+TEST_F(OptionsImplTest, StatsSinkTagsRoundTripAndValidate) {
+  std::unique_ptr<OptionsImpl> options = TestUtility::createOptionsImpl(
+      fmt::format("{} --stats-sink-tag run:phase-c --stats-sink-tag pod:driver-1 {}", client_name_,
+                  good_test_uri_));
+  const std::vector<std::string> expected{"run:phase-c", "pod:driver-1"};
+  EXPECT_EQ(expected, options->statsSinkTags());
+  CommandLineOptionsPtr cmd = options->toCommandLineOptions();
+  ASSERT_EQ(2, cmd->stats_sink_tags_size());
+  EXPECT_EQ("run:phase-c", cmd->stats_sink_tags(0));
+  OptionsImpl round_trip(*cmd);
+  EXPECT_EQ(expected, round_trip.statsSinkTags());
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(fmt::format(
+                              "{} --stats-sink-tag novalue {}", client_name_, good_test_uri_)),
+                          MalformedArgvException, "must be in key:value form");
+}
+
 TEST_F(OptionsImplTest, RequestSource) {
   Envoy::MessageUtil util;
   const std::string request_source = "127.9.9.4:32323";
