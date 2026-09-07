@@ -72,6 +72,22 @@ public:
    * @return bool true when requests should be issued as gRPC unary calls.
    */
   virtual bool grpc() const PURE;
+  /**
+   * @return bool true when messages should be sent over long-lived gRPC bidi streams.
+   */
+  virtual bool grpcStream() const PURE;
+  /**
+   * @return uint32_t total number of gRPC bidi streams to open (grpcStream() mode).
+   */
+  virtual uint32_t streams() const PURE;
+  /**
+   * @return uint32_t maximum unanswered messages per stream before sends are deferred.
+   */
+  virtual uint32_t maxInflightPerStream() const PURE;
+  /**
+   * @return std::chrono::nanoseconds time to wait for echoes after half-closing the streams.
+   */
+  virtual std::chrono::nanoseconds streamDrainDuration() const PURE;
   virtual const envoy::extensions::transport_sockets::tls::v3::UpstreamTlsContext&
   tlsContext() const PURE;
   virtual const std::optional<envoy::config::core::v3::BindConfig>& upstreamBindConfig() const PURE;
