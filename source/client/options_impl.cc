@@ -385,6 +385,12 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
                                       "Label. Allows specifying multiple labels which will be "
                                       "persisted in structured output formats.",
                                       false, "string", cmd);
+  TCLAP::MultiArg<std::string> stats_sink_tags(
+      "", "stats-sink-tag",
+      "Tag in 'key:value' form added to every metric pushed to a tag-capable stats sink "
+      "(envoy.stat_sinks.dog_statsd), e.g. run:phase-c. May be specified multiple times. Ignored "
+      "by sinks that cannot carry tags.",
+      false, "string", cmd);
 
   TCLAP::UnlabeledValueArg<std::string> uri(
       "uri",
@@ -672,6 +678,7 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
     }
   }
   TCLAP_SET_IF_SPECIFIED(labels, labels_);
+  TCLAP_SET_IF_SPECIFIED(stats_sink_tags, stats_sink_tags_);
   TCLAP_SET_IF_SPECIFIED(simple_warmup, simple_warmup_);
   TCLAP_SET_IF_SPECIFIED(no_duration, no_duration_);
   if (stats_sinks.isSet()) {
@@ -1078,6 +1085,8 @@ OptionsImpl::OptionsImpl(const nighthawk::client::CommandLineOptions& options) {
     no_duration_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(options, no_duration, no_duration_);
   }
   std::copy(options.labels().begin(), options.labels().end(), std::back_inserter(labels_));
+  std::copy(options.stats_sink_tags().begin(), options.stats_sink_tags().end(),
+            std::back_inserter(stats_sink_tags_));
   latency_response_header_name_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(
       options, latency_response_header_name, latency_response_header_name_);
   if (options.has_scheduled_start()) {
@@ -1149,6 +1158,13 @@ void OptionsImpl::raisePendingRequestsForStreams() {
 }
 
 void OptionsImpl::validate() const {
+  for (const std::string& tag : stats_sink_tags_) {
+    const size_t colon = tag.find(':');
+    if (colon == 0 || colon == std::string::npos || colon == tag.size() - 1) {
+      throw MalformedArgvException(
+          fmt::format("--stats-sink-tag '{}' must be in key:value form", tag));
+    }
+  }
   if (!request_body_.empty() && request_body_size_ > 0) {
     throw MalformedArgvException(
         "--request-body-file and --request-body-size are mutually exclusive");
@@ -1393,6 +1409,9 @@ CommandLineOptionsPtr OptionsImpl::toCommandLineOptionsInternal() const {
   command_line_options->mutable_nighthawk_service()->set_value(nighthawk_service_);
   for (const auto& label : labels_) {
     *command_line_options->add_labels() = label;
+  }
+  for (const auto& tag : stats_sink_tags_) {
+    command_line_options->add_stats_sink_tags(tag);
   }
   command_line_options->mutable_simple_warmup()->set_value(simple_warmup_);
   if (no_duration_) {

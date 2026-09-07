@@ -46,9 +46,9 @@ BenchmarkClientPtr BenchmarkClientFactoryImpl::create(
   if (options_.grpcStream()) {
     const uint32_t concurrency = std::stoi(options_.concurrency());
     auto stream_client = std::make_unique<GrpcStreamBenchmarkClientImpl>(
-        api, dispatcher, scope, statistic_factory.create(), cluster_manager, cluster_name,
-        request_generator.get(), options_.streams() / concurrency, options_.maxInflightPerStream(),
-        options_.streamDrainDuration(), options_.timeout());
+        api, dispatcher, scope, std::make_unique<SinkableHdrStatistic>(scope, worker_id),
+        cluster_manager, cluster_name, request_generator.get(), options_.streams() / concurrency,
+        options_.maxInflightPerStream(), options_.streamDrainDuration(), options_.timeout());
     return stream_client;
   }
   // While we lack options to configure which statistic backend goes where, we directly pass
