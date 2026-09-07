@@ -43,7 +43,7 @@ BenchmarkClientPtr BenchmarkClientFactoryImpl::create(
     absl::string_view cluster_name, int worker_id, RequestSource& request_generator,
     std::vector<UserDefinedOutputNamePluginPair> user_defined_output_plugins) const {
   StatisticFactoryImpl statistic_factory(options_);
-  if (options_.grpcStream()) {
+  if (options_.grpcMode() == nighthawk::client::GrpcMode::BIDI_STREAM) {
     const uint32_t concurrency = std::stoi(options_.concurrency());
     auto stream_client = std::make_unique<GrpcStreamBenchmarkClientImpl>(
         api, dispatcher, scope, std::make_unique<SinkableHdrStatistic>(scope, worker_id),
@@ -77,7 +77,7 @@ BenchmarkClientPtr BenchmarkClientFactoryImpl::create(
   benchmark_client->setMaxActiveRequests(options_.maxActiveRequests());
   benchmark_client->setMaxRequestsPerConnection(options_.maxRequestsPerConnection());
   benchmark_client->setTimeout(options_.timeout());
-  benchmark_client->setGrpc(options_.grpc());
+  benchmark_client->setGrpc(options_.grpcMode() != nighthawk::client::GrpcMode::NONE);
 
   return benchmark_client;
 }
@@ -110,7 +110,7 @@ SequencerPtr SequencerFactoryImpl::create(Envoy::TimeSource& time_source,
     // If no rate limiter plugin is set, use the default linear rate limiter.
   } else {
     // In --grpc-stream mode --rps is the aggregate message rate, divided over the workers.
-    const uint32_t rps = options_.grpcStream()
+    const uint32_t rps = options_.grpcMode() == nighthawk::client::GrpcMode::BIDI_STREAM
                              ? options_.requestsPerSecond() / std::stoi(options_.concurrency())
                              : options_.requestsPerSecond();
     Frequency frequency(rps);
@@ -223,7 +223,7 @@ RequestSourceFactoryImpl::create(const Envoy::Upstream::ClusterManagerPtr& clust
 
   header->setMethod(envoy::config::core::v3::RequestMethod_Name(options_.requestMethod()));
   std::string body = options_.requestBody();
-  if (options_.grpc()) {
+  if (options_.grpcMode() != nighthawk::client::GrpcMode::NONE) {
     // gRPC over HTTP/2: no content-length, message framed on the wire.
     header->setReferenceContentType(Envoy::Http::Headers::get().ContentTypeValues.Grpc);
     header->setReferenceTE(Envoy::Http::Headers::get().TEValues.Trailers);

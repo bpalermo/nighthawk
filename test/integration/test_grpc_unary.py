@@ -1,4 +1,4 @@
-"""Tests for gRPC unary mode (--grpc) and --request-body-file."""
+"""Tests for gRPC unary mode (--grpc-mode unary) and --request-body-file."""
 
 import pytest
 
@@ -30,14 +30,14 @@ def test_request_body_file_is_sent(http_test_server_fixture, tmp_path):
   counters = http_test_server_fixture.getNighthawkCounterMapFromJson(parsed_json)
   asserts.assertCounterEqual(counters, "benchmark.http_2xx", 10)
   asserts.assertCounterEqual(counters, "upstream_rq_total", 10)
-  # No gRPC accounting without --grpc.
+  # No gRPC accounting without --grpc-mode.
   asserts.assertNotIn("benchmark.grpc_error", counters)
 
 
 def test_grpc_unary_ok(http_test_server_fixture, tmp_path):
   """A grpc-status 0 response is a success: http_2xx, grpc_status.0 and latency_grpc_ok."""
   parsed_json, _ = http_test_server_fixture.runNighthawkClient([
-      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc",
+      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc-mode", "unary",
       "--request-body-file",
       _write_payload(tmp_path), "--request-header", GRPC_STATUS_OK_CONFIG, "--duration", "100",
       "--termination-predicate", "benchmark.http_2xx:9"
@@ -55,7 +55,7 @@ def test_grpc_unary_ok(http_test_server_fixture, tmp_path):
 def test_grpc_unary_error_is_not_a_2xx_success(http_test_server_fixture, tmp_path):
   """HTTP 200 with grpc-status 13 must count as grpc_error, not as http_2xx."""
   parsed_json, _ = http_test_server_fixture.runNighthawkClient([
-      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc",
+      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc-mode", "unary",
       "--request-body-file",
       _write_payload(tmp_path), "--request-header", GRPC_STATUS_INTERNAL_CONFIG, "--duration",
       "100", "--termination-predicate", "benchmark.grpc_error:9", "--no-default-failure-predicates"
@@ -75,7 +75,7 @@ def test_grpc_unary_synthesized_status_is_an_error(http_test_server_fixture, tmp
   a gRPC response with grpc-status 2 (UNKNOWN), which must be scored as an error.
   """
   parsed_json, _ = http_test_server_fixture.runNighthawkClient([
-      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc",
+      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc-mode", "unary",
       "--request-body-file",
       _write_payload(tmp_path), "--duration", "100", "--termination-predicate",
       "benchmark.grpc_error:9", "--no-default-failure-predicates"
@@ -93,7 +93,7 @@ def test_grpc_unary_missing_status_is_an_error(http_test_server_fixture, tmp_pat
   response carries no grpc-status at all.
   """
   parsed_json, _ = http_test_server_fixture.runNighthawkClient([
-      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc",
+      http_test_server_fixture.getTestServerRootUri() + "acme.greeter.Greeter/SayHello", "--grpc-mode", "unary",
       "--request-body-file",
       _write_payload(tmp_path), "--request-header", "content-type: application/octet-stream",
       "--duration", "100", "--termination-predicate", "benchmark.grpc_error:9",

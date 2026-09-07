@@ -69,15 +69,12 @@ public:
    */
   virtual const std::string& requestBody() const PURE;
   /**
-   * @return bool true when requests should be issued as gRPC unary calls.
+   * @return nighthawk::client::GrpcMode::GrpcModeOptions the gRPC load generation mode; NONE for
+   * plain HTTP.
    */
-  virtual bool grpc() const PURE;
+  virtual nighthawk::client::GrpcMode::GrpcModeOptions grpcMode() const PURE;
   /**
-   * @return bool true when messages should be sent over long-lived gRPC bidi streams.
-   */
-  virtual bool grpcStream() const PURE;
-  /**
-   * @return uint32_t total number of gRPC bidi streams to open (grpcStream() mode).
+   * @return uint32_t total number of gRPC bidi streams to open (BIDI_STREAM mode).
    */
   virtual uint32_t streams() const PURE;
   /**

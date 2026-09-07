@@ -46,8 +46,7 @@ TEST_F(FactoriesTest, CreateBenchmarkClient) {
   EXPECT_CALL(options_, maxRequestsPerConnection());
   EXPECT_CALL(options_, openLoop());
   EXPECT_CALL(options_, responseHeaderWithLatencyInput());
-  EXPECT_CALL(options_, grpc());
-  EXPECT_CALL(options_, grpcStream());
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::NONE));
   EXPECT_CALL(options_, timeout());
   StaticRequestSourceImpl request_generator(
       std::make_unique<Envoy::Http::TestRequestHeaderMapImpl>());
@@ -60,7 +59,8 @@ TEST_F(FactoriesTest, CreateBenchmarkClient) {
 TEST_F(FactoriesTest, CreateGrpcStreamBenchmarkClient) {
   BenchmarkClientFactoryImpl factory(options_);
   Envoy::Upstream::ClusterManagerPtr cluster_manager;
-  EXPECT_CALL(options_, grpcStream()).WillRepeatedly(Return(true));
+  EXPECT_CALL(options_, grpcMode())
+      .WillRepeatedly(Return(nighthawk::client::GrpcMode::BIDI_STREAM));
   EXPECT_CALL(options_, concurrency()).WillRepeatedly(Return("2"));
   EXPECT_CALL(options_, streams()).WillRepeatedly(Return(20));
   EXPECT_CALL(options_, maxInflightPerStream()).WillRepeatedly(Return(256));
@@ -98,7 +98,7 @@ TEST_F(FactoriesTest, CreateRequestSourcePluginWithWorkingJsonReturnsWorkingRequ
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
   EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
-  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::NONE));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -140,7 +140,7 @@ TEST_F(FactoriesTest, CreateRequestSourcePluginWithNonWorkingJsonThrowsError) {
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
   EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
-  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::NONE));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -166,7 +166,7 @@ TEST_F(FactoriesTest, CreateRequestSource) {
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
   EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
-  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::NONE));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -191,7 +191,7 @@ TEST_F(FactoriesTest, CreateRequestSourceWithBodyFileSetsContentLengthOnly) {
   EXPECT_CALL(options_, requestMethod())
       .WillRepeatedly(Return(envoy::config::core::v3::RequestMethod::POST));
   EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(body));
-  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::NONE));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/bar"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -215,7 +215,7 @@ TEST_F(FactoriesTest, CreateRequestSourceWithGrpcFramesBodyAndSetsGrpcHeaders) {
   EXPECT_CALL(options_, requestMethod())
       .WillRepeatedly(Return(envoy::config::core::v3::RequestMethod::POST));
   EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(message));
-  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(true));
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::UNARY));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/pkg.Svc/Method"));
   EXPECT_CALL(options_, requestSource());
   EXPECT_CALL(options_, requestSourcePluginConfig())
@@ -241,7 +241,7 @@ TEST_F(FactoriesTest, CreateRemoteRequestSource) {
   EXPECT_CALL(options_, requestMethod());
   EXPECT_CALL(options_, requestBodySize());
   EXPECT_CALL(options_, requestBody()).WillRepeatedly(ReturnRef(empty_body_));
-  EXPECT_CALL(options_, grpc()).WillRepeatedly(Return(false));
+  EXPECT_CALL(options_, grpcMode()).WillRepeatedly(Return(nighthawk::client::GrpcMode::NONE));
   EXPECT_CALL(options_, uri()).Times(2).WillRepeatedly(Return("http://foo/"));
   EXPECT_CALL(options_, requestSource()).WillOnce(Return("http://bar/"));
   EXPECT_CALL(options_, requestsPerSecond()).WillOnce(Return(5));
@@ -272,7 +272,7 @@ public:
     EXPECT_CALL(options_, rateLimiterPluginConfig())
         .WillOnce(ReturnRef(rate_limiter_plugin_config));
     EXPECT_CALL(options_, requestsPerSecond()).WillOnce(Return(1));
-    EXPECT_CALL(options_, grpcStream());
+    EXPECT_CALL(options_, grpcMode());
     EXPECT_CALL(options_, burstSize()).WillOnce(Return(2));
     EXPECT_CALL(options_, sequencerIdleStrategy())
         .Times(1)

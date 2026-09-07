@@ -67,8 +67,7 @@ public:
   std::vector<std::string> requestHeaders() const override { return request_headers_; };
   uint32_t requestBodySize() const override { return request_body_size_; };
   const std::string& requestBody() const override { return request_body_; };
-  bool grpc() const override { return grpc_; };
-  bool grpcStream() const override { return grpc_stream_; };
+  nighthawk::client::GrpcMode::GrpcModeOptions grpcMode() const override { return grpc_mode_; };
   uint32_t streams() const override { return streams_; };
   uint32_t maxInflightPerStream() const override { return max_inflight_per_stream_; };
   std::chrono::nanoseconds streamDrainDuration() const override { return stream_drain_duration_; };
@@ -178,8 +177,9 @@ private:
   std::vector<std::string> request_headers_;
   uint32_t request_body_size_{0};
   std::string request_body_;
-  bool grpc_{false};
-  bool grpc_stream_{false};
+  nighthawk::client::GrpcMode::GrpcModeOptions grpc_mode_{nighthawk::client::GrpcMode::NONE};
+  bool grpcEnabled() const { return grpc_mode_ != nighthawk::client::GrpcMode::NONE; }
+  bool grpcStreamEnabled() const { return grpc_mode_ == nighthawk::client::GrpcMode::BIDI_STREAM; }
   uint32_t streams_{20};
   uint32_t max_inflight_per_stream_{256};
   std::chrono::nanoseconds stream_drain_duration_{std::chrono::milliseconds(500)};
