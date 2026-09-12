@@ -18,15 +18,21 @@ GrpcStreamBenchmarkClientImpl::GrpcStreamBenchmarkClientImpl(
     StatisticPtr&& message_latency_statistic, Envoy::Upstream::ClusterManagerPtr& cluster_manager,
     absl::string_view cluster_name, RequestGenerator request_generator, uint32_t streams,
     uint32_t max_inflight_per_stream, std::chrono::nanoseconds drain_duration,
-    std::chrono::seconds open_timeout)
+    std::chrono::seconds open_timeout, uint32_t batch_messages,
+    std::chrono::nanoseconds batch_flush_interval)
     : api_(api), dispatcher_(dispatcher), scope_(scope.createScope("benchmark.")),
       message_latency_statistic_(std::move(message_latency_statistic)),
       cluster_manager_(cluster_manager), cluster_name_(std::string(cluster_name)),
       request_generator_(std::move(request_generator)), stream_count_(streams),
       max_inflight_per_stream_(max_inflight_per_stream), drain_duration_(drain_duration),
-      open_timeout_(open_timeout), counters_({ALL_GRPC_STREAM_COUNTERS(POOL_COUNTER(*scope_))}) {
+      open_timeout_(open_timeout), batch_messages_(batch_messages),
+      batch_flush_interval_(batch_flush_interval),
+      counters_({ALL_GRPC_STREAM_COUNTERS(POOL_COUNTER(*scope_))}) {
   RELEASE_ASSERT(stream_count_ > 0, "at least one stream is required");
   RELEASE_ASSERT(max_inflight_per_stream_ > 0, "max_inflight_per_stream must be positive");
+  RELEASE_ASSERT(batch_messages_ > 0, "batch_messages must be positive");
+  RELEASE_ASSERT(batch_messages_ <= max_inflight_per_stream_,
+                 "batch_messages must not exceed max_inflight_per_stream");
   message_latency_statistic_->setId("benchmark_stream.message_latency");
   streams_.resize(stream_count_);
   for (uint32_t i = 0; i < stream_count_; i++) {
@@ -54,6 +60,9 @@ void GrpcStreamBenchmarkClientImpl::prepare() {
   for (uint32_t i = 0; i < stream_count_; i++) {
     openStream(i);
   }
+  // Armed here so that it runs whether or not the opens still need to be waited for; flushing a
+  // stream that is not open yet is a no-op.
+  armBatchFlushTimer();
   if (pending_opens_ == 0) {
     return;
   }
@@ -68,6 +77,21 @@ void GrpcStreamBenchmarkClientImpl::prepare() {
   wait_timer_.reset();
   waiting_for_ = WaitingFor::Nothing;
   ENVOY_LOG(info, "Opened {} of {} gRPC bidi streams.", openStreams(), stream_count_);
+}
+
+void GrpcStreamBenchmarkClientImpl::armBatchFlushTimer() {
+  if (batch_messages_ <= 1 || batch_flush_interval_.count() <= 0) {
+    return;
+  }
+  const auto interval =
+      std::chrono::duration_cast<std::chrono::microseconds>(batch_flush_interval_);
+  batch_flush_timer_ = dispatcher_.createTimer([this, interval]() {
+    flushAllStreams();
+    if (!finished_) {
+      batch_flush_timer_->enableHRTimer(interval);
+    }
+  });
+  batch_flush_timer_->enableHRTimer(interval);
 }
 
 void GrpcStreamBenchmarkClientImpl::openStream(uint32_t index) {
@@ -138,10 +162,36 @@ bool GrpcStreamBenchmarkClientImpl::tryStartRequest(CompletionCallback caller_co
 
   stream.inflight.push_back(
       {api_.timeSource().monotonicTime(), std::move(caller_completion_callback)});
-  Envoy::Buffer::OwnedImpl buffer(message_);
-  stream.encoder->encodeData(buffer, /*end_stream=*/false);
+  stream.out_buffer.add(message_);
+  stream.out_messages++;
   counters_.stream_messages_sent_.inc();
+  if (stream.out_messages >= batch_messages_) {
+    flushStream(stream);
+  }
   return true;
+}
+
+void GrpcStreamBenchmarkClientImpl::flushStream(Stream& stream) {
+  if (stream.out_messages == 0) {
+    return;
+  }
+  if (stream.state != StreamState::Open || stream.encoder == nullptr) {
+    // The stream went away before its queued messages were written; completeInflight() accounts
+    // for them as lost.
+    stream.out_buffer.drain(stream.out_buffer.length());
+    stream.out_messages = 0;
+    return;
+  }
+  stream.out_messages = 0;
+  // encodeData() drains the buffer it is given.
+  stream.encoder->encodeData(stream.out_buffer, /*end_stream=*/false);
+  counters_.stream_batch_flushes_.inc();
+}
+
+void GrpcStreamBenchmarkClientImpl::flushAllStreams() {
+  for (Stream& stream : streams_) {
+    flushStream(stream);
+  }
 }
 
 void GrpcStreamBenchmarkClientImpl::onResponseHeaders(uint32_t index,
@@ -237,6 +287,9 @@ void GrpcStreamBenchmarkClientImpl::closeStream(
   }
   stream.state = StreamState::Closed;
   stream.encoder = nullptr;
+  // Anything queued for the next write will never go out; completeInflight() accounts for it.
+  stream.out_buffer.drain(stream.out_buffer.length());
+  stream.out_messages = 0;
   grpcStatusCounter(grpc_status).inc();
   completeInflight(stream, /*success=*/false);
   maybeExitWaitLoop();
@@ -297,6 +350,11 @@ void GrpcStreamBenchmarkClientImpl::finish() {
     return;
   }
   finished_ = true;
+  if (batch_flush_timer_ != nullptr) {
+    batch_flush_timer_->disableTimer();
+  }
+  // A partial batch is written before the half-close, so its messages still get an echo.
+  flushAllStreams();
   // Half-close every open stream: the server sends its remaining echoes and trailers.
   for (Stream& stream : streams_) {
     if (stream.state == StreamState::Open && stream.encoder != nullptr) {

@@ -85,6 +85,15 @@ public:
    * @return std::chrono::nanoseconds time to wait for echoes after half-closing the streams.
    */
   virtual std::chrono::nanoseconds streamDrainDuration() const PURE;
+  /**
+   * @return uint32_t number of outbound messages coalesced into a single write per stream.
+   */
+  virtual uint32_t streamBatchMessages() const PURE;
+  /**
+   * @return std::chrono::nanoseconds how long a partial batch may wait before it is written
+   * anyway; zero for no time bound.
+   */
+  virtual std::chrono::nanoseconds streamBatchFlushInterval() const PURE;
   virtual const envoy::extensions::transport_sockets::tls::v3::UpstreamTlsContext&
   tlsContext() const PURE;
   virtual const std::optional<envoy::config::core::v3::BindConfig>& upstreamBindConfig() const PURE;

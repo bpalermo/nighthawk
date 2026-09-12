@@ -21,6 +21,7 @@
 #include "nighthawk/common/request_source.h"
 #include "nighthawk/common/statistic.h"
 
+#include "external/envoy/source/common/buffer/buffer_impl.h"
 #include "external/envoy/source/common/common/logger.h"
 #include "external/envoy/source/common/grpc/codec.h"
 
@@ -41,7 +42,8 @@ namespace Client {
   COUNTER(stream_unexpected_message)                                                               \
   COUNTER(stream_inflight_lost)                                                                    \
   COUNTER(stream_drain_incomplete)                                                                 \
-  COUNTER(stream_write_blocked)
+  COUNTER(stream_write_blocked)                                                                    \
+  COUNTER(stream_batch_flushes)
 
 struct GrpcStreamCounters {
   ALL_GRPC_STREAM_COUNTERS(GENERATE_COUNTER_STRUCT)
@@ -55,7 +57,10 @@ struct GrpcStreamCounters {
  * stream that already has max_inflight_per_stream unanswered messages, or whose write buffer is
  * above the high watermark, is dropped and counted as stream_deferred: it is neither queued nor
  * retried, which keeps the schedule coordinated-omission safe and makes the counter a clean
- * saturation signal. finish() half-closes the streams and collects echoes for the drain duration.
+ * saturation signal. With batch_messages greater than 1 the messages are coalesced into one write
+ * (one DATA frame) per batch, the way a streaming client with a write buffer behaves; a message is
+ * stamped for latency when it is queued, so the time it waits in a batch is reported as latency.
+ * finish() half-closes the streams and collects echoes for the drain duration.
  *
  * Counters live under the "benchmark." scope: stream_messages_sent, stream_messages_received,
  * stream_deferred, stream_unavailable (send scheduled for a stream that is not open),
@@ -85,15 +90,18 @@ public:
    * deferred.
    * @param drain_duration how long finish() waits for echoes after half-closing.
    * @param open_timeout how long prepare() waits for the streams to open.
+   * @param batch_messages number of messages coalesced into a single write per stream; 1 writes
+   * every message on its own.
+   * @param batch_flush_interval how long a partial batch may wait before it is written anyway;
+   * zero for no time bound.
    */
-  GrpcStreamBenchmarkClientImpl(Envoy::Api::Api& api, Envoy::Event::Dispatcher& dispatcher,
-                                Envoy::Stats::Scope& scope,
-                                StatisticPtr&& message_latency_statistic,
-                                Envoy::Upstream::ClusterManagerPtr& cluster_manager,
-                                absl::string_view cluster_name, RequestGenerator request_generator,
-                                uint32_t streams, uint32_t max_inflight_per_stream,
-                                std::chrono::nanoseconds drain_duration,
-                                std::chrono::seconds open_timeout);
+  GrpcStreamBenchmarkClientImpl(
+      Envoy::Api::Api& api, Envoy::Event::Dispatcher& dispatcher, Envoy::Stats::Scope& scope,
+      StatisticPtr&& message_latency_statistic, Envoy::Upstream::ClusterManagerPtr& cluster_manager,
+      absl::string_view cluster_name, RequestGenerator request_generator, uint32_t streams,
+      uint32_t max_inflight_per_stream, std::chrono::nanoseconds drain_duration,
+      std::chrono::seconds open_timeout, uint32_t batch_messages = 1,
+      std::chrono::nanoseconds batch_flush_interval = std::chrono::nanoseconds::zero());
   ~GrpcStreamBenchmarkClientImpl() override;
 
   // BenchmarkClient
@@ -180,6 +188,9 @@ private:
     std::deque<InflightMessage> inflight;
     Envoy::Grpc::Decoder decoder;
     bool write_blocked{false};
+    // Messages queued for the next write, already gRPC framed, and how many they are.
+    Envoy::Buffer::OwnedImpl out_buffer;
+    uint32_t out_messages{0};
   };
 
   std::optional<Envoy::Upstream::HttpPoolData> pool();
@@ -197,6 +208,12 @@ private:
   // Marks the stream closed, accounts its grpc-status and fails any unanswered messages.
   void closeStream(uint32_t index, std::optional<Envoy::Grpc::Status::GrpcStatus> grpc_status);
   void completeInflight(Stream& stream, bool success);
+  // Writes a stream's queued messages as one DATA frame. No-op when nothing is queued.
+  void flushStream(Stream& stream);
+  // Writes every stream's queued messages; used by the flush timer and before half-closing.
+  void flushAllStreams();
+  // Starts the periodic partial-batch flush; a no-op unless batching with a time bound.
+  void armBatchFlushTimer();
   Envoy::Stats::Counter& grpcStatusCounter(std::optional<Envoy::Grpc::Status::GrpcStatus> status);
   // Exits the dispatcher run loop started by prepare()/finish() when its condition is met.
   void maybeExitWaitLoop();
@@ -212,6 +229,8 @@ private:
   const uint32_t max_inflight_per_stream_;
   const std::chrono::nanoseconds drain_duration_;
   const std::chrono::seconds open_timeout_;
+  const uint32_t batch_messages_;
+  const std::chrono::nanoseconds batch_flush_interval_;
 
   GrpcStreamCounters counters_;
   absl::flat_hash_map<std::optional<Envoy::Grpc::Status::GrpcStatus>, Envoy::Stats::Counter*>
@@ -226,6 +245,9 @@ private:
   enum class WaitingFor { Nothing, Opens, Closes };
   WaitingFor waiting_for_{WaitingFor::Nothing};
   Envoy::Event::TimerPtr wait_timer_;
+  // Periodic timer that writes partial batches, armed by prepare() when batching is configured
+  // with a time bound.
+  Envoy::Event::TimerPtr batch_flush_timer_;
   bool finished_{false};
 };
 

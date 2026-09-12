@@ -85,14 +85,15 @@ public:
   }
 
   void createClient(uint32_t streams, uint32_t max_inflight = 256,
-                    std::chrono::nanoseconds drain = 50ms) {
+                    std::chrono::nanoseconds drain = 50ms, uint32_t batch_messages = 1,
+                    std::chrono::nanoseconds batch_flush_interval = std::chrono::nanoseconds(0)) {
     RequestGenerator request_generator = [this]() {
       return std::make_unique<RequestImpl>(header_map_, grpcFrameMessage(message_));
     };
     client_ = std::make_unique<GrpcStreamBenchmarkClientImpl>(
         *api_, *dispatcher_, *store_.rootScope(), std::make_unique<StreamingStatistic>(),
         cluster_manager_, "benchmark", request_generator, streams, max_inflight, drain,
-        /*open_timeout=*/1s);
+        /*open_timeout=*/1s, batch_messages, batch_flush_interval);
     client_->setShouldMeasureLatencies(true);
   }
 
@@ -345,6 +346,74 @@ TEST_F(GrpcStreamClientTest, FinishGivesUpAfterDrainDuration) {
   EXPECT_EQ(0, client_->openStreams());
   EXPECT_EQ(1, getCounter("stream_inflight_lost"));
   EXPECT_EQ(1, getCounter("stream_drain_incomplete"));
+}
+
+TEST_F(GrpcStreamClientTest, BatchedMessagesAreCoalescedIntoOneWrite) {
+  createClient(1, 256, 50ms, /*batch_messages=*/4);
+  client_->prepare();
+  const size_t frame_size = grpcFrameMessage(message_).size();
+  int completions = 0;
+  CompletionCallback callback = [&](bool, bool success) {
+    if (success) {
+      completions++;
+    }
+  };
+  // The first three messages are queued, not written.
+  for (int i = 0; i < 3; i++) {
+    EXPECT_TRUE(client_->tryStartRequest(callback));
+  }
+  EXPECT_EQ(3, getCounter("stream_messages_sent"));
+  EXPECT_EQ(0, sent_data_[0].size());
+  EXPECT_EQ(0, getCounter("stream_batch_flushes"));
+  // The fourth completes the batch: one write holding all four framed messages.
+  EXPECT_TRUE(client_->tryStartRequest(callback));
+  ASSERT_EQ(1, sent_data_[0].size());
+  EXPECT_EQ(4 * frame_size, sent_data_[0][0].size());
+  EXPECT_EQ(4, getCounter("stream_messages_sent"));
+  EXPECT_EQ(1, getCounter("stream_batch_flushes"));
+  // Batching does not change echo accounting: every message still completes on its echo.
+  serverHeaders(0);
+  echo(0, 4);
+  EXPECT_EQ(4, completions);
+  EXPECT_EQ(4, getCounter("stream_messages_received"));
+}
+
+TEST_F(GrpcStreamClientTest, PartialBatchIsFlushedByTheFlushInterval) {
+  createClient(1, 256, 50ms, /*batch_messages=*/8, /*batch_flush_interval=*/1ms);
+  client_->prepare();
+  const size_t frame_size = grpcFrameMessage(message_).size();
+  EXPECT_TRUE(client_->tryStartRequest([](bool, bool) {}));
+  EXPECT_TRUE(client_->tryStartRequest([](bool, bool) {}));
+  EXPECT_EQ(0, sent_data_[0].size());
+  // Run the dispatcher long enough for the flush timer to fire; it writes the partial batch.
+  Envoy::Event::TimerPtr exit_timer = dispatcher_->createTimer([this]() { dispatcher_->exit(); });
+  exit_timer->enableTimer(100ms);
+  dispatcher_->run(Envoy::Event::Dispatcher::RunType::RunUntilExit);
+  ASSERT_EQ(1, sent_data_[0].size());
+  EXPECT_EQ(2 * frame_size, sent_data_[0][0].size());
+  EXPECT_EQ(1, getCounter("stream_batch_flushes"));
+  EXPECT_EQ(2, getCounter("stream_messages_sent"));
+}
+
+TEST_F(GrpcStreamClientTest, PartialBatchWithoutAFlushIntervalWaitsForFinish) {
+  createClient(1, 256, /*drain=*/20ms, /*batch_messages=*/4);
+  client_->prepare();
+  const size_t frame_size = grpcFrameMessage(message_).size();
+  EXPECT_TRUE(client_->tryStartRequest([](bool, bool) {}));
+  EXPECT_TRUE(client_->tryStartRequest([](bool, bool) {}));
+  // No time bound: nothing is written while the run is going.
+  Envoy::Event::TimerPtr exit_timer = dispatcher_->createTimer([this]() { dispatcher_->exit(); });
+  exit_timer->enableTimer(20ms);
+  dispatcher_->run(Envoy::Event::Dispatcher::RunType::RunUntilExit);
+  EXPECT_EQ(0, sent_data_[0].size());
+  // finish() writes the partial batch before it half-closes, so those messages can still be
+  // echoed during the drain window.
+  client_->finish();
+  ASSERT_EQ(2, sent_data_[0].size());
+  EXPECT_EQ(2 * frame_size, sent_data_[0][0].size());
+  EXPECT_EQ("", sent_data_[0][1]);
+  EXPECT_TRUE(half_closed_[0]);
+  EXPECT_EQ(1, getCounter("stream_batch_flushes"));
 }
 
 } // namespace Client

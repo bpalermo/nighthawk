@@ -71,6 +71,10 @@ public:
   uint32_t streams() const override { return streams_; };
   uint32_t maxInflightPerStream() const override { return max_inflight_per_stream_; };
   std::chrono::nanoseconds streamDrainDuration() const override { return stream_drain_duration_; };
+  uint32_t streamBatchMessages() const override { return stream_batch_messages_; };
+  std::chrono::nanoseconds streamBatchFlushInterval() const override {
+    return stream_batch_flush_interval_;
+  };
   const envoy::extensions::transport_sockets::tls::v3::UpstreamTlsContext&
   tlsContext() const override {
     return tls_context_;
@@ -183,6 +187,8 @@ private:
   uint32_t streams_{20};
   uint32_t max_inflight_per_stream_{256};
   std::chrono::nanoseconds stream_drain_duration_{std::chrono::milliseconds(500)};
+  uint32_t stream_batch_messages_{1};
+  std::chrono::nanoseconds stream_batch_flush_interval_{std::chrono::nanoseconds(0)};
 
   /**
    * Reads the whole file at path into a string (binary safe).

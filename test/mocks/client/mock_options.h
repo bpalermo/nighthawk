@@ -49,6 +49,8 @@ public:
   MOCK_METHOD(uint32_t, streams, (), (const, override));
   MOCK_METHOD(uint32_t, maxInflightPerStream, (), (const, override));
   MOCK_METHOD(std::chrono::nanoseconds, streamDrainDuration, (), (const, override));
+  MOCK_METHOD(uint32_t, streamBatchMessages, (), (const, override));
+  MOCK_METHOD(std::chrono::nanoseconds, streamBatchFlushInterval, (), (const, override));
   MOCK_METHOD(envoy::extensions::transport_sockets::tls::v3::UpstreamTlsContext&, tlsContext, (),
               (const, override));
   MOCK_METHOD(std::optional<envoy::config::core::v3::BindConfig>&, upstreamBindConfig, (),

@@ -222,6 +222,16 @@ message CommandLineOptions {
     google.protobuf.UInt32Value max_inflight_per_stream = 2 [(validate.rules).uint32 = {gte: 1}];
     // How long to wait for outstanding echoes after half-closing the streams. Default: 500ms.
     google.protobuf.Duration drain_duration = 3 [(validate.rules).duration.gte.nanos = 0];
+    // Number of outbound messages coalesced into a single write (one DATA frame) per stream,
+    // which is what a streaming client with a write buffer does. Default: 1, every message is
+    // written on its own. Must not exceed max_inflight_per_stream. Messages are stamped for
+    // latency when they are queued, so the time a message waits in a batch is reported as
+    // latency.
+    google.protobuf.UInt32Value batch_messages = 4 [(validate.rules).uint32 = {gte: 1}];
+    // How long a partial batch may wait for more messages before it is written anyway. Default:
+    // 0, no time bound, in which case a partial batch waits for the next scheduled message on
+    // its stream and is flushed at the end of the run. Ignored when batch_messages is 1.
+    google.protobuf.Duration batch_flush_interval = 5 [(validate.rules).duration.gte.nanos = 0];
   }
   GrpcStreamOptions grpc_stream = 122;
 

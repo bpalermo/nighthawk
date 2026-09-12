@@ -64,6 +64,9 @@ TEST_F(FactoriesTest, CreateGrpcStreamBenchmarkClient) {
   EXPECT_CALL(options_, concurrency()).WillRepeatedly(Return("2"));
   EXPECT_CALL(options_, streams()).WillRepeatedly(Return(20));
   EXPECT_CALL(options_, maxInflightPerStream()).WillRepeatedly(Return(256));
+  EXPECT_CALL(options_, streamBatchMessages()).WillRepeatedly(Return(1));
+  EXPECT_CALL(options_, streamBatchFlushInterval())
+      .WillRepeatedly(Return(std::chrono::nanoseconds(0)));
   EXPECT_CALL(options_, streamDrainDuration())
       .WillRepeatedly(Return(std::chrono::nanoseconds(std::chrono::milliseconds(500))));
   EXPECT_CALL(options_, timeout()).WillRepeatedly(Return(std::chrono::seconds(30)));

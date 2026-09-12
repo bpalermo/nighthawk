@@ -191,6 +191,8 @@ bazel-bin/nighthawk_client  [--user-defined-plugin-config <string>] ...
 <uint32_t>] [--transport-socket <string>]
 [--upstream-bind-config <string>]
 [--tls-context <string>]
+[--stream-batch-flush-interval <string>]
+[--stream-batch-messages <uint32_t>]
 [--stream-drain-duration <string>]
 [--max-inflight-per-stream <uint32_t>]
 [--streams <uint32_t>] [--grpc-mode <unary
@@ -383,6 +385,20 @@ DEPRECATED, use --transport-socket instead. TlS context configuration
 in json. Mutually exclusive with --transport-socket. Example (json):
 {common_tls_context:{tls_params:{cipher_suites:["-ALL:ECDHE-RSA-AES128
 -SHA"]}}}
+
+--stream-batch-flush-interval <string>
+Time a partial batch may wait for more messages before it is written
+anyway, as a duration string, e.g. 0.0002s for 200us. Requires
+--stream-batch-messages greater than 1. Without it a partial batch
+waits for the next scheduled message on its stream and is flushed at
+the end of the run (default: 0, no time bound).
+
+--stream-batch-messages <uint32_t>
+Coalesce this many outbound messages into a single write (one DATA
+frame) per stream in --grpc-mode bidi-stream, like a streaming client
+with a write buffer. Must not exceed --max-inflight-per-stream. A
+message is stamped for latency when it is queued, so the time it waits
+in a batch is reported as latency (default: 1, no coalescing).
 
 --stream-drain-duration <string>
 Time to wait for outstanding echoes after half-closing the streams in

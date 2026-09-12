@@ -488,6 +488,8 @@ TEST_F(OptionsImplTest, GrpcStreamDefaultsAndRoundTrip) {
   EXPECT_EQ(nighthawk::client::GrpcMode::BIDI_STREAM, round_trip.grpcMode());
   EXPECT_EQ(20, round_trip.streams());
   EXPECT_EQ(std::chrono::milliseconds(500), round_trip.streamDrainDuration());
+  EXPECT_EQ(1, round_trip.streamBatchMessages());
+  EXPECT_EQ(std::chrono::nanoseconds(0), round_trip.streamBatchFlushInterval());
 }
 
 TEST_F(OptionsImplTest, GrpcStreamExplicitValues) {
@@ -500,6 +502,17 @@ TEST_F(OptionsImplTest, GrpcStreamExplicitValues) {
   EXPECT_EQ(64, options->maxInflightPerStream());
   EXPECT_EQ(std::chrono::milliseconds(1250), options->streamDrainDuration());
   EXPECT_EQ(10, options->maxPendingRequests());
+  EXPECT_EQ(1, options->streamBatchMessages());
+  std::unique_ptr<OptionsImpl> batched = TestUtility::createOptionsImpl(
+      fmt::format("{} --grpc-mode bidi-stream --concurrency 1 --rps 400 --streams 4 "
+                  "--stream-batch-messages 8 --stream-batch-flush-interval 0.0002s {}",
+                  client_name_, good_test_uri_));
+  EXPECT_EQ(8, batched->streamBatchMessages());
+  EXPECT_EQ(std::chrono::microseconds(200), batched->streamBatchFlushInterval());
+  // The values survive a round trip through CommandLineOptions.
+  OptionsImpl batched_round_trip(*batched->toCommandLineOptions());
+  EXPECT_EQ(8, batched_round_trip.streamBatchMessages());
+  EXPECT_EQ(std::chrono::microseconds(200), batched_round_trip.streamBatchFlushInterval());
   // An explicitly larger value is left alone.
   std::unique_ptr<OptionsImpl> explicit_pending = TestUtility::createOptionsImpl(
       fmt::format("{} --grpc-mode bidi-stream --concurrency 1 --rps 100 --streams 4 "
@@ -534,6 +547,24 @@ TEST_F(OptionsImplTest, GrpcStreamValidation) {
           "bogus {}",
           client_name_, good_test_uri_)),
       MalformedArgvException, "Invalid value for --stream-drain-duration");
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(fmt::format(
+                              "{} --grpc-mode bidi-stream --concurrency 1 --rps 400 --streams 4 "
+                              "--max-inflight-per-stream 4 --stream-batch-messages 8 {}",
+                              client_name_, good_test_uri_)),
+                          MalformedArgvException, "--stream-batch-messages .* must not exceed");
+  EXPECT_THROW_WITH_REGEX(
+      TestUtility::createOptionsImpl(
+          fmt::format("{} --grpc-mode bidi-stream --concurrency 1 --rps 400 --streams 4 "
+                      "--stream-batch-flush-interval 0.001s {}",
+                      client_name_, good_test_uri_)),
+      MalformedArgvException,
+      "--stream-batch-flush-interval requires --stream-batch-messages greater than 1");
+  EXPECT_THROW_WITH_REGEX(TestUtility::createOptionsImpl(fmt::format(
+                              "{} --grpc-mode bidi-stream --concurrency 1 --rps 400 --streams 4 "
+                              "--stream-batch-messages 4 --stream-batch-flush-interval bogus {}",
+                              client_name_, good_test_uri_)),
+                          MalformedArgvException,
+                          "Invalid value for --stream-batch-flush-interval");
   EXPECT_THROW_WITH_REGEX(
       TestUtility::createOptionsImpl(
           fmt::format("{} --grpc-mode bidi-stream --concurrency 1 --rps 400 --protocol http1 {}",

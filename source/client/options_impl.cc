@@ -247,6 +247,20 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
       "bidi-stream, "
       "as a duration string (default: 0.5s).",
       false, "0.5s", "string", cmd);
+  TCLAP::ValueArg<uint32_t> stream_batch_messages(
+      "", "stream-batch-messages",
+      "Coalesce this many outbound messages into a single write (one DATA frame) per stream in "
+      "--grpc-mode bidi-stream, like a streaming client with a write buffer. Must not exceed "
+      "--max-inflight-per-stream. A message is stamped for latency when it is queued, so the "
+      "time it waits in a batch is reported as latency (default: 1, no coalescing).",
+      false, 1, "uint32_t", cmd);
+  TCLAP::ValueArg<std::string> stream_batch_flush_interval(
+      "", "stream-batch-flush-interval",
+      "Time a partial batch may wait for more messages before it is written anyway, as a duration "
+      "string, e.g. 0.0002s for 200us. Requires --stream-batch-messages greater than 1. Without "
+      "it a partial batch waits for the next scheduled message on its stream and is flushed at "
+      "the end of the run (default: 0, no time bound).",
+      false, "0s", "string", cmd);
 
   TCLAP::ValueArg<std::string> tls_context(
       "", "tls-context",
@@ -543,6 +557,18 @@ OptionsImpl::OptionsImpl(int argc, const char* const* argv) {
           Envoy::Protobuf::util::TimeUtil::DurationToNanoseconds(duration));
     } else {
       throw MalformedArgvException("Invalid value for --stream-drain-duration");
+    }
+  }
+  TCLAP_SET_IF_SPECIFIED(stream_batch_messages, stream_batch_messages_);
+  if (stream_batch_flush_interval.isSet()) {
+    Envoy::Protobuf::Duration duration;
+    if (Envoy::Protobuf::util::TimeUtil::FromString(stream_batch_flush_interval.getValue(),
+                                                    &duration) &&
+        duration.nanos() >= 0 && duration.seconds() >= 0) {
+      stream_batch_flush_interval_ = std::chrono::nanoseconds(
+          Envoy::Protobuf::util::TimeUtil::DurationToNanoseconds(duration));
+    } else {
+      throw MalformedArgvException("Invalid value for --stream-batch-flush-interval");
     }
   }
   if (grpcEnabled() && !h2.isSet() && !protocol.isSet()) {
@@ -953,6 +979,13 @@ OptionsImpl::OptionsImpl(const nighthawk::client::CommandLineOptions& options) {
       stream_drain_duration_ = std::chrono::nanoseconds(
           Envoy::Protobuf::util::TimeUtil::DurationToNanoseconds(stream_options.drain_duration()));
     }
+    stream_batch_messages_ =
+        PROTOBUF_GET_WRAPPED_OR_DEFAULT(stream_options, batch_messages, stream_batch_messages_);
+    if (stream_options.has_batch_flush_interval()) {
+      stream_batch_flush_interval_ =
+          std::chrono::nanoseconds(Envoy::Protobuf::util::TimeUtil::DurationToNanoseconds(
+              stream_options.batch_flush_interval()));
+    }
   }
   if (grpcEnabled() && !options.has_protocol() && !options.has_h2()) {
     protocol_ = nighthawk::client::Protocol::HTTP2;
@@ -1207,6 +1240,19 @@ void OptionsImpl::validate() const {
     if (max_inflight_per_stream_ == 0) {
       throw MalformedArgvException("--max-inflight-per-stream must be greater than 0");
     }
+    if (stream_batch_messages_ == 0) {
+      throw MalformedArgvException("--stream-batch-messages must be greater than 0");
+    }
+    if (stream_batch_messages_ > max_inflight_per_stream_) {
+      throw MalformedArgvException(
+          fmt::format("--stream-batch-messages ({}) must not exceed --max-inflight-per-stream "
+                      "({}), a larger batch could never fill",
+                      stream_batch_messages_, max_inflight_per_stream_));
+    }
+    if (stream_batch_flush_interval_.count() > 0 && stream_batch_messages_ == 1) {
+      throw MalformedArgvException(
+          "--stream-batch-flush-interval requires --stream-batch-messages greater than 1");
+    }
     if (streams_ / parsed_concurrency > max_active_requests_) {
       throw MalformedArgvException(
           fmt::format("--max-active-requests ({}) must be at least the number of streams per "
@@ -1366,6 +1412,10 @@ CommandLineOptionsPtr OptionsImpl::toCommandLineOptionsInternal() const {
     stream_options->mutable_max_inflight_per_stream()->set_value(max_inflight_per_stream_);
     *stream_options->mutable_drain_duration() =
         Envoy::Protobuf::util::TimeUtil::NanosecondsToDuration(stream_drain_duration_.count());
+    stream_options->mutable_batch_messages()->set_value(stream_batch_messages_);
+    *stream_options->mutable_batch_flush_interval() =
+        Envoy::Protobuf::util::TimeUtil::NanosecondsToDuration(
+            stream_batch_flush_interval_.count());
   }
 
   if (rate_limiter_plugin_config_.has_value()) {
